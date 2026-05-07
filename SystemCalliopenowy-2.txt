@@ -1,0 +1,336 @@
+# © Michal Sachman
+# "Vier Gewinnt" - Calliope mini
+# Radio-Erweiterung muss aktiviert sein!
+#
+# Rolle wird automatisch bestimmt:
+# Der Calliope mit der kleineren Seriennummer = Spieler A
+# Der Calliope mit der groesseren Seriennummer = Spieler B
+# Im Simulator haben beide verschiedene Seriennummern -> funktioniert!
+
+LEER = 0
+SP1  = 1
+SP2  = 2
+COLS = 5
+ROWS = 5
+
+feld = [0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0]
+
+spieler         = SP1
+cursor          = 2
+cursor_sichtbar = True
+spiel_laeuft    = False
+meine_rolle     = 0        # wird automatisch gesetzt
+andere_serial   = 0        # Seriennummer des anderen Calliope
+meine_serial    = control.device_serial_number()
+
+radio.set_group(7)
+
+# -------------------------------------------------- Hilfsfunktionen
+def get_feld(row, col):
+    return feld[row * COLS + col]
+
+def set_feld(row, col, wert):
+    feld[row * COLS + col] = wert
+
+def feld_leeren():
+    global spieler, cursor, cursor_sichtbar, spiel_laeuft
+    for i in range(ROWS * COLS):
+        feld[i] = LEER
+    spieler         = SP1
+    cursor          = 2
+    cursor_sichtbar = True
+    spiel_laeuft    = False
+
+def feld_anzeigen():
+    for row in range(ROWS):
+        for col in range(COLS):
+            wert = get_feld(row, col)
+            if wert == SP1:
+                led.plot_brightness(col, row, 255)
+            elif wert == SP2:
+                led.plot_brightness(col, row, 15)
+            else:
+                led.unplot(col, row)
+    if spiel_laeuft and spieler == meine_rolle:
+        if cursor_sichtbar:
+            led.plot_brightness(cursor, 0, 150)
+        else:
+            wert = get_feld(0, cursor)
+            if wert == SP1:
+                led.plot_brightness(cursor, 0, 255)
+            elif wert == SP2:
+                led.plot_brightness(cursor, 0, 15)
+            else:
+                led.unplot(cursor, 0)
+
+def naechste_freie_zeile(col):
+    row = ROWS - 1
+    while row >= 0:
+        if get_feld(row, col) == LEER:
+            return row
+        row -= 1
+    return -1
+
+def stein_einwerfen(col):
+    row = naechste_freie_zeile(col)
+    if row == -1:
+        return False
+    set_feld(row, col, spieler)
+    return True
+
+def pruefen_gewinner(s):
+    for row in range(ROWS):
+        count = 0
+        for col in range(COLS):
+            if get_feld(row, col) == s:
+                count += 1
+                if count >= 4:
+                    return True
+            else:
+                count = 0
+    for col in range(COLS):
+        count = 0
+        for row in range(ROWS):
+            if get_feld(row, col) == s:
+                count += 1
+                if count >= 4:
+                    return True
+            else:
+                count = 0
+    for startrow in range(ROWS - 3):
+        for startcol in range(COLS - 3):
+            count = 0
+            for k in range(4):
+                if get_feld(startrow + k, startcol + k) == s:
+                    count += 1
+            if count >= 4:
+                return True
+    for startrow in range(ROWS - 3):
+        for startcol in range(3, COLS):
+            count = 0
+            for k in range(4):
+                if get_feld(startrow + k, startcol - k) == s:
+                    count += 1
+            if count >= 4:
+                return True
+    return False
+
+def feld_voll():
+    for col in range(COLS):
+        if get_feld(0, col) == LEER:
+            return False
+    return True
+
+# -------------------------------------------------- Rolle bestimmen
+def rolle_bestimmen():
+    global meine_rolle
+    if andere_serial == 0:
+        return   # anderer noch nicht bekannt
+    if meine_serial < andere_serial:
+        meine_rolle = SP1
+    else:
+        meine_rolle = SP2
+    meinen_buchstaben_zeigen()
+
+def meinen_buchstaben_zeigen():
+    if meine_rolle == SP1:
+        basic.show_string("A")
+    elif meine_rolle == SP2:
+        basic.show_string("B")
+
+# -------------------------------------------------- Sounds
+def sound_start():
+    music.play_tone(262, 100)
+    basic.pause(50)
+    music.play_tone(330, 100)
+    basic.pause(50)
+    music.play_tone(392, 150)
+
+def sound_cursor():
+    music.play_tone(300, 40)
+
+def sound_stein():
+    music.play_tone(440, 80)
+
+def sound_voll():
+    music.play_tone(200, 100)
+    basic.pause(50)
+    music.play_tone(150, 150)
+
+def sound_gewinner():
+    music.play_tone(392, 100)
+    basic.pause(30)
+    music.play_tone(440, 100)
+    basic.pause(30)
+    music.play_tone(494, 100)
+    basic.pause(30)
+    music.play_tone(523, 300)
+
+def sound_draw():
+    music.play_tone(330, 150)
+    basic.pause(50)
+    music.play_tone(294, 150)
+    basic.pause(50)
+    music.play_tone(262, 300)
+
+# -------------------------------------------------- Anzeigen
+def gewinner_zeigen(s):
+    sound_gewinner()
+    if s == SP1:
+        basic.show_string("A")
+    else:
+        basic.show_string("B")
+    basic.pause(2000)
+
+def nach_spielende():
+    feld_leeren()
+    meinen_buchstaben_zeigen()
+
+# -------------------------------------------------- Zug auswerten
+def zug_auswerten():
+    global spieler
+    if pruefen_gewinner(spieler):
+        radio.send_value("W", spieler)
+        gewinner_zeigen(spieler)
+        nach_spielende()
+    elif feld_voll():
+        radio.send_value("D", 1)
+        sound_draw()
+        basic.show_string("DRAW")
+        basic.pause(2000)
+        nach_spielende()
+    else:
+        if spieler == SP1:
+            spieler = SP2
+        else:
+            spieler = SP1
+        basic.clear_screen()
+        feld_anzeigen()
+
+def spalte_voll_warnung():
+    sound_voll()
+    for i in range(3):
+        for col in range(COLS):
+            led.plot_brightness(col, 0, 200)
+        basic.pause(100)
+        for col in range(COLS):
+            led.unplot(col, 0)
+        basic.pause(100)
+
+# -------------------------------------------------- Spiel starten
+def spiel_starten():
+    global spiel_laeuft
+    feld_leeren()
+    spiel_laeuft = True
+    sound_start()
+    basic.clear_screen()
+    feld_anzeigen()
+
+# -------------------------------------------------- START
+# Beide senden ihre Seriennummer damit der andere sie kennt
+basic.show_string("...")
+radio.send_value("HI", meine_serial)
+
+# -------------------------------------------------- Blink-Loop
+def on_forever():
+    global cursor_sichtbar
+    # Solange Rolle unbekannt: immer wieder HI senden
+    if meine_rolle == 0:
+        radio.send_value("HI", meine_serial)
+        basic.pause(500)
+        return
+    if spiel_laeuft and spieler == meine_rolle:
+        cursor_sichtbar = not cursor_sichtbar
+        feld_anzeigen()
+    basic.pause(400)
+
+basic.forever(on_forever)
+
+# -------------------------------------------------- Tasten
+def on_button_a():
+    global cursor
+    if not spiel_laeuft:
+        return
+    if spieler != meine_rolle:
+        return
+    cursor = (cursor - 1) % COLS
+    sound_cursor()
+    feld_anzeigen()
+
+input.on_button_pressed(Button.A, on_button_a)
+
+def on_button_b():
+    global cursor
+    if not spiel_laeuft:
+        return
+    if spieler != meine_rolle:
+        return
+    cursor = (cursor + 1) % COLS
+    sound_cursor()
+    feld_anzeigen()
+
+input.on_button_pressed(Button.B, on_button_b)
+
+def on_button_ab():
+    global cursor
+    if meine_rolle == 0:
+        return
+    if not spiel_laeuft:
+        # Nur Spieler A startet
+        if meine_rolle == SP1:
+            radio.send_value("START", 1)
+            spiel_starten()
+        return
+    if spieler != meine_rolle:
+        return
+    if stein_einwerfen(cursor):
+        sound_stein()
+        radio.send_value("Z", cursor)
+        feld_anzeigen()
+        basic.pause(100)
+        zug_auswerten()
+    else:
+        spalte_voll_warnung()
+
+input.on_button_pressed(Button.AB, on_button_ab)
+
+# -------------------------------------------------- Radio empfangen
+def on_radio_received(name, value):
+    global andere_serial, spieler
+
+    # Seriennummer des anderen empfangen -> Rollen bestimmen
+    if name == "HI":
+        if andere_serial == 0:
+            andere_serial = value
+            rolle_bestimmen()
+            # Eigene Seriennummer zuruecksenden falls anderer noch wartet
+            radio.send_value("HI", meine_serial)
+
+    elif name == "START":
+        if not spiel_laeuft:
+            spiel_starten()
+
+    elif name == "Z":
+        col = value
+        row = naechste_freie_zeile(col)
+        if row >= 0:
+            set_feld(row, col, spieler)
+        feld_anzeigen()
+        basic.pause(100)
+        zug_auswerten()
+
+    elif name == "W":
+        gewinner_zeigen(value)
+        nach_spielende()
+
+    elif name == "D":
+        sound_draw()
+        basic.show_string("DRAW")
+        basic.pause(2000)
+        nach_spielende()
+
+radio.on_received_value(on_radio_received)
